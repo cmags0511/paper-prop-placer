@@ -1,0 +1,35 @@
+name: Paper trade
+on:
+  schedule:
+    - cron: "*/30 15-23,0-4 * * *"   # NBA tip-off hours (UTC): early entries, tip-off entries
+    - cron: "0 12 * * *"             # morning settle of last night's games
+  workflow_dispatch:
+concurrency:
+  group: paper-trade
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: cmags0511/prop-tracker
+          path: prop-tracker
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run trader
+        run: python trader.py
+      - name: Commit ledger
+        run: |
+          git config user.name "paper-trader-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add ledger.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Update ledger"
+          git pull --rebase origin main
+          git push

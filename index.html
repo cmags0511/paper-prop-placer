@@ -1,0 +1,42 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Polymarket Paper Trader</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--tx:#e8eaf0;--mut:#8a90a0;--g:#3ecf8e;--r:#ff6b6b;--b:#6ea8fe}
+*{box-sizing:border-box}body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:14px;max-width:760px;margin:auto}
+h1{font-size:18px;margin:4px 0 2px}.sub{color:var(--mut);font-size:12px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.c{background:var(--card);border-radius:10px;padding:10px 12px}
+.k{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.04em}.v{font-size:20px;font-weight:600}
+.g{color:var(--g)}.r{color:var(--r)}h2{font-size:14px;margin:18px 0 6px;color:var(--mut)}
+.p{background:var(--card);border-radius:10px;padding:10px 12px;margin-bottom:8px}.h{display:flex;justify-content:space-between;gap:8px}
+.l{color:var(--mut);font-size:13px;margin-top:4px}.t{font-size:11px;padding:1px 6px;border-radius:6px;background:#262b36;color:var(--b)}
+svg{width:100%;height:90px;background:var(--card);border-radius:10px}
+</style></head><body>
+<h1>Polymarket Paper Trader</h1><div class="sub" id="sub">NBA same-game 3-leg parlays · paper only · no real money</div>
+<div class="grid" id="stats"></div><h2>Equity</h2><div id="chart"></div>
+<h2>Listed at tip-off vs dropped</h2><div class="grid" id="timing"></div>
+<h2>Open</h2><div id="open"></div><h2>Settled</h2><div id="done"></div><h2>Last run</h2><div class="c l" id="run"></div>
+<script>
+const $=id=>document.getElementById(id),m=n=>(n<0?"-":"")+"$"+Math.abs(n).toFixed(2),cls=n=>n>0?"g":n<0?"r":"";
+const pct=x=>(x*100).toFixed(0)+"%",tip=s=>new Date(s).toLocaleString([],{weekday:"short",hour:"numeric",minute:"2-digit"});
+fetch("ledger.json?"+Date.now()).then(r=>r.json()).then(L=>{
+  const P=L.parlays,S=P.filter(p=>p.status!="open"),O=P.filter(p=>p.status=="open");
+  const staked=S.reduce((a,p)=>a+p.stake,0),pnl=S.reduce((a,p)=>a+p.pnl,0),won=S.filter(p=>p.status=="won").length;
+  const openC=O.reduce((a,p)=>a+p.stake,0),eq=L.cash+openC;
+  const card=(k,v,c="")=>`<div class="c"><div class="k">${k}</div><div class="v ${c}">${v}</div></div>`;
+  $("stats").innerHTML=card("Bankroll",m(eq),cls(eq-L.start_bankroll))+card("P/L settled",m(pnl),cls(pnl))+
+    card("ROI",staked?(pnl/staked*100).toFixed(1)+"%":"–",cls(pnl))+card("Record",`${won}-${S.length-won}`)+
+    card("Cash",m(L.cash))+card("At risk",m(openC)+` (${O.length})`);
+  const by=(t,f)=>{const x=S.filter(f),q=x.reduce((a,p)=>a+p.pnl,0);
+    return card(t,x.length?`${m(q)} · ${x.filter(p=>p.status=="won").length}/${x.length}`:"no settled bets yet",cls(q))};
+  $("timing").innerHTML=by("Listed at tip-off",p=>p.listed_at_tip!==false)+by("Dropped before tip-off",p=>p.listed_at_tip===false);
+  const e=L.equity;if(e.length>1){const lo=Math.min(...e.map(x=>x.equity)),hi=Math.max(...e.map(x=>x.equity)),sp=(hi-lo)||1;
+    const pts=e.map((x,i)=>`${i/(e.length-1)*300},${80-(x.equity-lo)/sp*70}`).join(" ");
+    $("chart").innerHTML=`<svg viewBox="0 0 300 90" preserveAspectRatio="none"><polyline fill="none" stroke="#6ea8fe" stroke-width="2" points="${pts}"/></svg>`}
+  const row=p=>`<div class="p"><div class="h"><b>${p.teams.join(" @ ")}</b><span><span class="t">${p.listed?"listed":"dropped · still counted"}</span> ${tip(p.game_t)}</span></div>
+    ${p.legs.map(l=>`<div class="l">${l.name} ${l.side} ${l.line} ${l.label.toLowerCase()} · ask ${l.ask.toFixed(2)} ${l.result?(l.result=="won"?"✅":l.result=="lost"?"❌":"➖"):""}</div>`).join("")}
+    <div class="l">chance ${pct(p.p)} · pays ×${p.dec.toFixed(1)} (legs ×${p.dec_product.toFixed(1)}) · EV ${pct(p.ev)}${p.pnl!=null?` · <b class="${cls(p.pnl)}">${m(p.pnl)}</b>`:""}</div></div>`;
+  $("open").innerHTML=O.map(row).join("")||'<div class="c l">none</div>';
+  $("done").innerHTML=S.slice().reverse().slice(0,30).map(row).join("")||'<div class="c l">nothing settled yet</div>';
+  const r=L.runs[L.runs.length-1];$("run").innerHTML=r?`${r.t} UTC<br>${r.notes.join("<br>")}`:"–";
+}).catch(()=>$("sub").textContent="No ledger yet");
+</script></body></html>

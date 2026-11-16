@@ -1,0 +1,22 @@
+{
+  "start_bankroll": 400.0,
+  "unit": 2.5,
+  "legs": 3,
+  "paused": false,
+  "horizon_hours": 30,
+  "max_bets_per_game": 4,
+  "tipoff_window_min": 50,
+  "min_ev": 0.04,
+  "min_joint_p": 0.10,
+  "leg_min_edge": -0.03,
+  "leg_max_edge": 0.08,
+  "factor_trust": 0.6,
+  "max_spread": 0.08,
+  "min_ask_size": 10,
+  "book_gives": 0.5,
+  "daily_risk_cap": 50.0,
+  "max_open_risk_pct": 0.25,
+  "max_legs_per_game": 14,
+  "yes_is_over": true,
+  "markets": {"points": "pts", "rebounds": "reb", "assists": "ast", "threes": "3pm"}
+}
