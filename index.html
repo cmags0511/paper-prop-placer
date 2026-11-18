@@ -9,7 +9,7 @@ body{margin:0;font:15px/1.4 system-ui,-apple-system,sans-serif;background:var(--
 .wrap{max-width:780px;margin:auto;padding:12px 12px 0}
 h1{font-size:17px;margin:2px 0}.sub{color:var(--mut);font-size:12px;margin-bottom:10px}
 nav{position:fixed;bottom:0;left:0;right:0;background:#12151bf2;backdrop-filter:blur(8px);border-top:1px solid var(--line);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom);z-index:5}
-nav button{flex:1;max-width:150px;background:none;border:0;color:var(--mut);padding:11px 4px;font:inherit;font-size:13px}
+nav button{flex:1;max-width:150px;background:none;border:0;color:var(--mut);padding:11px 2px;font:inherit;font-size:12px}
 nav button.on{color:var(--b);font-weight:600}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.c{background:var(--card);border-radius:12px;padding:10px 12px}
 .k{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.04em}.v{font-size:20px;font-weight:650}.s{font-size:12px;color:var(--mut)}
@@ -37,6 +37,11 @@ svg{display:block;width:100%;background:var(--card);border-radius:12px;touch-act
 .more{width:100%;margin-top:4px}
 .empty{color:var(--mut);text-align:center;padding:26px 0}
 .hide{display:none}
+.lg{padding:6px 12px 8px}.lt{display:flex;justify-content:space-between;gap:8px;font-size:14px}.ls{font-size:12px;color:var(--mut);margin-top:2px}
+.bar{height:6px;border-radius:4px;background:#262b36;margin-top:5px;overflow:hidden}.bar i{display:block;height:100%;border-radius:4px}
+.gh{display:flex;justify-content:space-between;align-items:center;margin:14px 2px 6px}.gh b{font-size:15px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--r);margin-right:5px;animation:pl 1.4s infinite}@keyframes pl{50%{opacity:.25}}
+.pf{padding:8px 12px;border-top:1px solid var(--line);font-size:13px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
 </style></head><body>
 <div class="wrap">
 <h1>Paper Prop Placer</h1>
@@ -44,7 +49,7 @@ svg{display:block;width:100%;background:var(--card);border-radius:12px;touch-act
 <div id="view"></div>
 </div>
 <nav id="nav">
-<button data-t="overview">Overview</button><button data-t="bets">Bets</button><button data-t="games">Games</button><button data-t="players">Players</button><button data-t="log">Log</button>
+<button data-t="live">Live</button><button data-t="overview">Overview</button><button data-t="bets">Bets</button><button data-t="games">Games</button><button data-t="players">Players</button><button data-t="log">Log</button>
 </nav>
 <script>
 const $=s=>document.querySelector(s);
@@ -155,6 +160,105 @@ function players(){
   ${rows.map(o=>`<tr class="click" data-q="${esc(o.k)}"><td>${esc(o.k)}</td><td>${o.n}</td><td>${o.w+o.l?pc(o.w/(o.w+o.l))+` <span class="m">${o.w}/${o.w+o.l}</span>`:"–"}</td><td>${pc(o.p/o.n)}</td><td>${(o.ask/o.n).toFixed(2)}</td></tr>`).join("")||`<tr><td colspan=5 class="empty">no legs yet</td></tr>`}</table></div><div class="s" style="margin-top:8px">Tap a row to see those bets. Tap a column to sort.</div>`;
 }
 
+/* ---------- live ---------- */
+const LV={g:{},box:{},px:{},at:0,busy:false,err:"",timer:null,ms:30000};
+const ESPN="https://site.api.espn.com/apis/site/v2/sports/basketball/nba/";
+const etDate=s=>new Date(s).toLocaleDateString("en-CA",{timeZone:"America/New_York"}).replace(/-/g,"");
+const gkey=(a,b)=>[a,b].sort().join("|");
+const nn=n=>n.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z ]/g," ").split(/\s+/).filter(w=>w&&!["jr","sr","ii","iii","iv"].includes(w));
+const clk=x=>{const m=String(x||"0:00").split(":");return m.length>1?(+m[0])*60+(+m[1]):+m[0]};
+const jget=u=>fetch(u).then(r=>{if(!r.ok)throw new Error("HTTP "+r.status);return r.json()});
+function parseBox(d){
+  const out={};
+  (d.boxscore.players||[]).forEach(t=>{const st=t.statistics[0],lb=st.labels,ix=k=>lb.indexOf(k),arr=[];
+    st.athletes.forEach(a=>{const v=a.stats||[];if(!v.length)return;
+      arr.push({t:nn(a.athlete.displayName),o:{pts:+v[ix("PTS")],reb:+v[ix("REB")],ast:+v[ix("AST")],"3pm":parseInt(v[ix("3PT")]),min:v[ix("MIN")]}})});
+    out[t.team.abbreviation]=arr});
+  return out;
+}
+function findP(box,team,name){
+  const a=(box&&box[team])||[],t=nn(name),full=t.join(" ");
+  return (a.find(x=>x.t.join(" ")===full)||a.find(x=>x.t[x.t.length-1]===t[t.length-1]&&x.t[0][0]===t[0][0])||{}).o||null;
+}
+async function livePoll(){
+  if(LV.busy||!L)return;LV.busy=true;
+  try{
+    const O=L.parlays.filter(p=>p.status==="open");
+    const dates=[...new Set(O.map(p=>etDate(p.game_t)))];
+    const sbs=await Promise.all(dates.map(d=>jget(ESPN+"scoreboard?dates="+d).catch(()=>null)));
+    const g={};
+    sbs.filter(Boolean).forEach(sb=>sb.events.forEach(e=>{const t=e.competitions[0].competitors;
+      g[gkey(t[0].team.abbreviation,t[1].team.abbreviation)]={id:e.id,state:e.status.type.state,detail:e.status.type.shortDetail,period:e.status.period,clock:e.status.displayClock,
+        score:Object.fromEntries(t.map(x=>[x.team.abbreviation,x.score]))}}));
+    LV.g=g;
+    const gm=p=>g[gkey(p.teams[0],p.teams[1])];
+    const need=[...new Set(O.map(gm).filter(x=>x&&x.state!=="pre").map(x=>x.id))];
+    await Promise.all(need.map(id=>jget(ESPN+"summary?event="+id).then(d=>{LV.box[id]=parseBox(d)}).catch(()=>{})));
+    const mids=[...new Set(O.filter(p=>{const x=gm(p);return !x||x.state!=="post"}).flatMap(p=>p.legs.map(l=>l.market_id)))];
+    await Promise.all(mids.map(id=>jget("https://gamma-api.polymarket.com/markets/"+id).then(m=>{LV.px[id]={bid:m.bestBid==null?null:+m.bestBid,ask:m.bestAsk==null?null:+m.bestAsk}}).catch(()=>{})));
+    LV.at=Date.now();LV.err="";LV.ms=Object.values(g).some(x=>x.state==="in")?20000:90000;
+  }catch(e){LV.err=String(e.message||e)}
+  LV.busy=false;if(S.tab==="live")live();
+}
+function liveStart(){if(LV.timer)return;livePoll();const tick=()=>{LV.timer=setTimeout(async()=>{if(S.tab==="live"&&!document.hidden)await livePoll();tick()},LV.ms)};tick()}
+function liveStop(){clearTimeout(LV.timer);LV.timer=null}
+function elapsed(g){ // share of regulation played, null in overtime
+  if(!g||g.state==="pre")return 0;if(g.state==="post")return 1;if(g.period>4)return null;
+  return Math.max(0,Math.min(1,((g.period-1)*720+720-clk(g.clock))/2880));
+}
+function legLive(l,p,g,box){
+  const o=findP(box,l.team,l.name),fin=g&&g.state==="post";
+  if(!g||g.state==="pre")return {st:"pre"};
+  if(!o||isNaN(o[l.market]))return fin?{st:"dnp"}:{st:"wait"};
+  const v=o[l.market],e=elapsed(g),pace=e&&e>.2&&!fin?v/e:null;
+  if(l.side==="over"){if(v>l.line)return {st:"hit",v};if(fin)return {st:v===l.line?"push":"miss",v};return {st:"alive",v,left:l.line-v,pace}}
+  if(v>l.line)return {st:"bust",v};if(fin)return {st:v===l.line?"push":"hit",v};return {st:"alive",v,left:l.line-v,pace};
+}
+function px(l){const q=LV.px[l.market_id];if(!q||q.bid==null||q.ask==null)return null;const m=(q.bid+q.ask)/2;return l.idx===0?m:1-m}
+function liveCard(p,g,box){
+  const ls=p.legs.map(l=>({l,r:legLive(l,p,g,box)}));
+  const sts=ls.map(x=>x.r.st),dead=sts.some(s=>s==="bust"||s==="miss"),all=sts.every(s=>s==="hit"),odd=sts.some(s=>s==="push"||s==="dnp");
+  let chance=1,ok=true;ls.forEach(({l,r})=>{if(r.st==="hit")return;if(r.st==="bust"||r.st==="miss"){chance=0;return}const q=px(l);if(q==null)ok=false;else chance*=q});
+  const worth=p.stake*p.dec*chance,pay=p.stake*p.dec;
+  const rows=ls.map(({l,r})=>{
+    const lab=`${l.side==="under"?"Under":"Over"} ${l.line} ${esc(l.label.replace("Points","pts").replace("Rebounds","reb").replace("Assists","ast").replace("3-Pointers","3s"))}`;
+    let txt="",c="m",w=0,col="#3a4252";
+    if(r.st==="pre"||r.st==="wait"){txt=r.st==="pre"?"not started":"no stats yet"}
+    else if(r.st==="dnp"){txt="no stats (DNP?)"}
+    else{w=Math.min(100,r.v/(l.line||1)*100);
+      if(r.st==="hit"){txt=`✅ ${r.v}`;c="g";col="#3ecf8e";w=l.side==="over"?100:w}
+      else if(r.st==="miss"||r.st==="bust"){txt=`❌ ${r.v}`;c="r";col="#ff6b6b";w=100}
+      else if(r.st==="push"){txt=`push ${r.v}`;col="#f5c451"}
+      else{txt=`${r.v} now`+(l.side==="over"?` · needs ${r.left>0?Math.ceil(r.left):0}`:` · room for ${Math.floor(r.left)}`)+(r.pace!=null?` · pace ${r.pace.toFixed(1)}`:"");
+        col=l.side==="over"?"#6ea8fe":(w>=80?"#f5c451":"#3ecf8e")}}
+    return `<div class="lg"><div class="lt"><span><b>${esc(l.name)}</b> <span class="m">${lab}</span></span><span class="${c}">${txt}</span></div><div class="bar"><i style="width:${w}%;background:${col}"></i></div></div>`}).join("");
+  let foot;
+  if(dead)foot=`<span class="r"><b>Lost</b> ${money(-p.stake)} (a leg is dead)</span>`;
+  else if(all)foot=`<span class="g"><b>All legs hit</b> · pays ${cash(pay)} once it settles</span>`;
+  else if(odd)foot=`<span class="y">Check: a leg has a push or no stats</span>`;
+  else foot=`<span>${sts.filter(s=>s==="hit").length} hit · ${sts.filter(s=>s==="alive").length} alive${ok?` · market chance <b>${pc(chance)}</b>`:""}</span>`;
+  const right=dead?"":all?"":ok?`<span>worth ≈ <b class="${worth>=p.stake?"g":"r"}">${cash(worth)}</b> <span class="m">(staked ${cash(p.stake)}, pays ${cash(pay)})</span></span>`:`<span class="m">pays ${cash(pay)}</span>`;
+  return `<div class="p"><div class="ph" style="cursor:default"><div class="s">${p.listed?"listed":"dropped · counted"} · bet ${when(p.placed)}</div><div class="s">p ${pc(p.p)}</div></div>${rows}<div class="pf">${foot}${right}</div></div>`;
+}
+function live(){
+  const O=L.parlays.filter(p=>p.status==="open");
+  if(!O.length){$("#view").innerHTML=`<div class="empty">No open bets right now</div>`;return}
+  const m=new Map();O.forEach(p=>{(m.get(p.game)||m.set(p.game,[]).get(p.game)).push(p)});
+  const rank=x=>!x?1:x.state==="in"?0:x.state==="pre"?1:2;
+  const gs=[...m].map(([k,ps])=>({k,ps,g:LV.g[gkey(ps[0].teams[0],ps[0].teams[1])]})).sort((a,b)=>rank(a.g)-rank(b.g)||a.k.localeCompare(b.k));
+  let tot=0,stk=0,okAll=true;
+  const body=gs.map(({ps,g})=>{
+    const box=g&&LV.box[g.id],t=ps[0].teams,sc=g&&g.state!=="pre"?`${t[0]} ${g.score[t[0]]} – ${g.score[t[1]]} ${t[1]}`:`${t[0]} @ ${t[1]}`;
+    const stat=!g?`<span class="m">${when(ps[0].game_t)}</span>`:g.state==="in"?`<span class="r"><i class="dot"></i>${esc(g.detail)}</span>`:g.state==="post"?`<span class="m">Final</span>`:`<span class="m">${when(ps[0].game_t)}</span>`;
+    return `<div class="gh"><b>${esc(sc)}</b>${stat}</div>`+ps.map(p=>liveCard(p,g,box)).join("")}).join("");
+  O.forEach(p=>{stk+=p.stake;const g=LV.g[gkey(p.teams[0],p.teams[1])],box=g&&LV.box[g.id];let c=1;
+    p.legs.forEach(l=>{const r=legLive(l,p,g,box);if(r.st==="hit")return;if(r.st==="bust"||r.st==="miss"){c=0;return}const q=px(l);if(q==null)okAll=false;else c*=q});tot+=p.stake*p.dec*c});
+  const age=LV.at?Math.round((Date.now()-LV.at)/1000):null;
+  $("#view").innerHTML=`<div class="c" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><div class="k">Open bets worth now</div><div class="v ${tot>=stk?"g":"r"}">${LV.at?cash(tot):"…"}</div><div class="s">${O.length} bets · ${cash(stk)} staked${okAll?"":" · some prices missing"}</div></div>
+   <div style="text-align:right"><button class="chip" data-refresh="1">${LV.busy?"Updating…":"Refresh"}</button><div class="s" style="margin-top:4px">${LV.err?`<span class="r">${esc(LV.err)}</span>`:age==null?"loading":`updated ${age}s ago`}</div></div></div>`+body+
+   `<div class="s" style="margin-top:12px">Scores from ESPN, prices from Polymarket, refreshed about every ${LV.ms/1000}s while this tab is open. "Worth" is the paper payout times the market's current chance for each leg, an estimate and not a cash-out offer. Pace = stat so far ÷ share of the game played.</div>`;
+}
+
 /* ---------- log ---------- */
 function log(){
   const R=(L.runs||[]).slice().reverse();
@@ -164,12 +268,14 @@ function log(){
 function render(){
   if(!L)return;
   document.querySelectorAll("nav button").forEach(b=>b.classList.toggle("on",b.dataset.t===S.tab));
-  ({overview,bets,games,players,log}[S.tab]||overview)();
+  if(S.tab==='live')liveStart();else liveStop();
+  ({live,overview,bets,games,players,log}[S.tab]||overview)();
 }
 function go(t){S.tab=t;try{history.replaceState(null,"","#"+t)}catch(e){}render();scrollTo(0,0)}
 document.addEventListener("click",e=>{
-  const t=e.target.closest("[data-t],[data-f],[data-range],[data-game],[data-q],[data-more],[data-ps],[data-pby],.ph[data-game]");
+  const t=e.target.closest("[data-refresh],[data-t],[data-f],[data-range],[data-game],[data-q],[data-more],[data-ps],[data-pby],.ph[data-game]");
   const card=e.target.closest(".p[data-id]");
+  if(t&&t.dataset.refresh!==undefined){livePoll();return}
   if(t&&t.dataset.t)return go(t.dataset.t);
   if(t&&t.dataset.range){S.range=t.dataset.range;return render()}
   if(t&&t.dataset.f){const[k,v]=t.dataset.f.split(":");S[k]=v;S.shown=40;return render()}
