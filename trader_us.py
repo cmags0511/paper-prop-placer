@@ -372,6 +372,23 @@ def execute(us, par, L, cfg, now, live, save):
     return rec
 
 
+def account_snapshot(us):
+    """real balance + positions, from the exchange (read-only). Values only; no ids or per-position detail."""
+    st, d = us.req("GET", "/v1/account/balances")
+    b = next(iter((d or {}).get("balances") or []), None) if st == 200 else None
+    if not b:
+        return None
+    acc = {"balance": fnum(b.get("currentBalance")), "buying_power": fnum(b.get("buyingPower")), "open_orders": fnum(b.get("openOrders")),
+           "positions_value": fnum(b.get("assetNotional"))}
+    st, d = us.req("GET", "/v1/portfolio/positions")
+    if st == 200 and isinstance(d, dict):
+        pos = d.get("positions")
+        if isinstance(pos, dict):
+            pos = list(pos.values())
+        acc["positions_count"] = len(pos) if isinstance(pos, list) else None
+    return acc
+
+
 # ------------------------------------------------------------------ main
 def new_ledger(cfg):
     return {"venue": cfg["venue"], "start_bankroll": cfg["start_bankroll"], "unit": cfg["unit"], "cash": cfg["start_bankroll"],
@@ -501,6 +518,15 @@ def main():
     L["equity"].append({"t": run["t"], "equity": round(L["cash"] + open_cost, 2)})
     L["equity"], L["runs"] = L["equity"][-3000:], (L["runs"] + [run])[-300:]
     L["updated"] = run["t"]
+    if us and cfg.get("show_account", True):
+        try:
+            acc = account_snapshot(us)
+            if acc:
+                L["account"] = dict(acc, t=run["t"])
+                L.setdefault("deposit", 100.0)
+                run["notes"].append("account balance refreshed")
+        except Exception:
+            pass
     print(json.dumps(run, indent=1))
     save()
 
