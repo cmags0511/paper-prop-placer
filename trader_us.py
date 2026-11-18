@@ -241,6 +241,14 @@ def execute(us, par, L, cfg, now, live, save):
     rec["order_status"], rec["order_id"], rec["result"] = st, (d or {}).get("id"), exec_summary(d)
     if st != 200:
         rec["error"] = f"order failed ({st})"
+    r = rec["result"]
+    try:
+        q, px = float(r.get("cumQuantity") or 0), float(r.get("avgPx") or 0)
+    except Exception:
+        q = px = 0
+    if q > 0 and px > 0:
+        fee = float(r.get("commissionNotionalTotalCollected") or 0)
+        rec.update(filled=True, qty_filled=q, avg_px=px, cost=round(q * px + fee, 4))
     return rec
 
 
@@ -265,7 +273,7 @@ def main():
     if kid and sec:
         try:
             us = US(kid, sec)
-            live = os.environ.get("LIVE", "").strip() == "1" and not cfg["paused"]
+            live = (os.environ.get("LIVE", "").strip() == "1" or cfg["live"].get("enabled")) and not cfg["paused"]
         except Exception:
             us = None
     mode = "live" if live else "shadow" if us else "paper"
@@ -277,6 +285,10 @@ def main():
 
     run["settled"] = settle(L, now)
     if cfg["paused"]:
+        run["notes"].append("paused")
+    elif not us:
+        run["notes"].append("no keys")
+    elif False:
         run["notes"].append("paused")
     else:
         PL, PK, GM, rows, slate, out = T.load_tracker(a.tracker)
@@ -323,12 +335,20 @@ def main():
                     if us and orders < cfg["live"]["max_orders_per_run"]:
                         orders += 1
                         par["live"] = execute(us, par, L, cfg, now, live, lambda: (L["parlays"].append(par) if par not in L["parlays"] else None, save()))
+                    lvr = par.get("live") or {}
+                    if live and not lvr.get("filled"):
+                        if par in L["parlays"]:
+                            L["parlays"].remove(par)
+                        run["notes"].append(f"{label}: NOT bet ({lvr.get('error') or lvr.get('result') or 'no fill'})")
+                        continue
+                    if live:
+                        par["stake"], par["dec"], par["qty"] = lvr["cost"], round(lvr["qty_filled"] / lvr["cost"], 3), lvr["qty_filled"]
                     if not a.dry:
                         if par not in L["parlays"]:
                             L["parlays"].append(par)
                         mine.append(par)
-                        L["cash"] = round(L["cash"] - cfg["unit"], 2)
-                        spent_today += cfg["unit"]
+                        L["cash"] = round(L["cash"] - par["stake"], 2)
+                        spent_today += par["stake"]
                     run["placed"] += 1
                     lv = par.get("live") or {}
                     run["notes"].append(f"{label}: listed and bet, p={par['p']}, paper pays x{par['dec']}, ev={par['ev']}"

@@ -1,5 +1,5 @@
 {
-  "start_bankroll": 400.0,
+  "start_bankroll": 100,
   "unit": 2.5,
   "legs": 3,
   "paused": false,
@@ -13,8 +13,8 @@
   "factor_trust": 0.6,
   "max_spread": 0.08,
   "book_gives": 0.5,
-  "daily_risk_cap": 50.0,
-  "max_open_risk_pct": 0.25,
+  "daily_risk_cap": 25,
+  "max_open_risk_pct": 0.5,
   "max_legs_per_game": 14,
   "markets": {
     "basketball_player_points": "pts",
@@ -30,6 +30,7 @@
     "daily_cap": 25.0,
     "total_cap": 100.0,
     "min_ev": 0.08,
-    "max_orders_per_run": 6
+    "max_orders_per_run": 6,
+    "enabled": true
   }
 }
