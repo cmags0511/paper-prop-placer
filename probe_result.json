@@ -1,5 +1,5 @@
 {
- "ran_at": "2026-11-18T01:20:35Z",
+ "ran_at": "2026-11-18T01:43:28Z",
  "keys_present": true,
  "checks": {
   "public_nba_events": {
@@ -48,6 +48,29 @@
    "market_types": {
     "futures": 200
    }
+  },
+  "rfq_rfq_user_id": {
+   "status": 200,
+   "keys": [
+    "rfqUserId"
+   ]
+  },
+  "rfq_rfqs_open": {
+   "status": 200,
+   "keys": [
+    "cursor",
+    "rfqs"
+   ]
+  },
+  "rfq_rfq_quotes": {
+   "status": 400,
+   "keys": []
+  },
+  "rfq_orders_open": {
+   "status": 200,
+   "keys": [
+    "orders"
+   ]
   }
  }
 }
