@@ -32,6 +32,6 @@
     "min_ev": 0.08,
     "max_orders_per_run": 3,
     "enabled": true,
-    "mode": "rfq_quote"
+    "mode": "rfq_live"
   }
 }

@@ -252,6 +252,75 @@ def rfq_quotes(us, par, cfg):
     return rec
 
 
+def rfq_buy(us, par, L, cfg, now, save):
+    """Create the combo + RFQ, take the cheapest firm quote at or below max price (EV guard), within live caps."""
+    lv, rec = cfg["live"], {"mode": "rfq_live", "ordered": False}
+    legs = [{"symbol": l["slug"], "side": "SIDE_BUY" if l["side"] == "over" else "SIDE_SELL"} for l in par["legs"]]
+    st, d = us.req("POST", "/v1/combos", {"legs": legs})
+    combo = (d or {}).get("combo") or {}
+    if st != 200 or not combo.get("id"):
+        rec["error"] = f"combo create failed ({st})"
+        return rec
+    pmax = min(0.99, par["p"] / (1 + lv["min_ev"]))
+    rec.update(combo=combo["id"], max_price=round(pmax, 4))
+    st, d = us.req("POST", "/v1/rfqs", {"symbol": combo["id"], "cashOrderQty": f"{lv['unit']:.2f}", "restRemainder": False})
+    rid = (d or {}).get("rfqId") or (d or {}).get("id")
+    if not rid:
+        rec["error"] = "rfq create: " + json.dumps(d)[:200]
+        return rec
+    rec["rfq"] = rid
+    best = None
+    for _ in range(8):
+        time.sleep(2)
+        st, d = us.req("GET", f"/v1/rfqs/quotes?rfqId={rid}")
+        qs = [q for q in ((d or {}).get("quotes") or []) if q.get("status") == "QUOTE_STATUS_ACTIVE" and fnum(q.get("buyPrice")) > 0]
+        if qs:
+            best = min(qs, key=lambda q: fnum(q["buyPrice"]))
+            rec["best_quote"], rec["n_quotes"] = fnum(best["buyPrice"]), len(qs)
+            if _ >= 2:
+                break
+    if not best:
+        us.req("DELETE", f"/v1/rfqs/{rid}")
+        rec["error"] = "no quotes"
+        return rec
+    px, qty = fnum(best["buyPrice"]), fnum(best.get("buyQtyDecimal"))
+    cost = px * qty
+    rec.update(qty=qty, max_cost=round(cost, 2))
+    if px > pmax:
+        us.req("DELETE", f"/v1/rfqs/{rid}")
+        rec["error"] = f"best quote {px} above my max {rec['max_price']}"
+        return rec
+    if cost > lv["unit"] * 1.1 or qty <= 0:
+        us.req("DELETE", f"/v1/rfqs/{rid}")
+        rec["error"] = f"quote size/cost off ({qty} x {px})"
+        return rec
+    if live_spent(L, now, True) + cost > lv["daily_cap"] or live_spent(L, now, False) + cost > lv["total_cap"]:
+        us.req("DELETE", f"/v1/rfqs/{rid}")
+        rec["error"] = "live cap reached"
+        return rec
+    rec["ordered"], par["live"] = True, rec                  # recorded first so a crash can never double-buy
+    save()
+    st, d = us.req("PUT", f"/v1/rfqs/{rid}/quotes/{best['id']}/accept", {"acceptedSide": "SIDE_BUY"})
+    rec["accept_status"] = st
+    if st != 200:
+        rec["error"] = f"accept failed ({st}): " + json.dumps(d)[:200]
+        return rec
+    q = {}
+    for _ in range(5):                                         # the maker has a ~3s last look; read the outcome
+        time.sleep(2)
+        st, d = us.req("GET", f"/v1/rfqs/quotes?rfqId={rid}&quoteId={best['id']}")
+        q = next(iter((d or {}).get("quotes") or []), {}) if st == 200 else {}
+        if q.get("executedTime") or q.get("status") not in (None, "QUOTE_STATUS_ACTIVE", "QUOTE_STATUS_ACCEPTED", "QUOTE_STATUS_CONFIRMED"):
+            break
+    rec["quote_status"] = q.get("status")
+    rec["verified"] = bool(q.get("executedTime") or q.get("rfqCreatorOrderId"))
+    if rec["verified"] or q.get("status") in (None, "QUOTE_STATUS_ACTIVE", "QUOTE_STATUS_ACCEPTED", "QUOTE_STATUS_CONFIRMED"):
+        rec.update(filled=True, qty_filled=qty, avg_px=px, cost=round(cost, 4))
+    else:
+        rec["error"] = "maker declined: " + str(q.get("status"))
+    return rec
+
+
 def execute(us, par, L, cfg, now, live, save):
     """create the real combo, preview a real order, and (live only) place it. Returns a small, non-private record."""
     lv, rec = cfg["live"], {"mode": "live" if live else "shadow", "ordered": False}
@@ -389,7 +458,11 @@ def main():
                             q = rfq_quotes(us, par, cfg)
                             run["notes"].append(f"{label}: QUOTE-ONLY, my max {q.get('max_price')}, model p {par['p']}, result {json.dumps({k: v for k, v in q.items() if k not in ('mode', 'ordered', 'combo')})[:600]}")
                         continue
-                    if us and orders < cfg["live"]["max_orders_per_run"]:
+                    if us and cfg["live"].get("mode") == "rfq_live":
+                        if orders < cfg["live"]["max_orders_per_run"]:
+                            orders += 1
+                            par["live"] = rfq_buy(us, par, L, cfg, now, lambda: (L["parlays"].append(par) if par not in L["parlays"] else None, save()))
+                    elif us and orders < cfg["live"]["max_orders_per_run"]:
                         orders += 1
                         par["live"] = execute(us, par, L, cfg, now, live, lambda: (L["parlays"].append(par) if par not in L["parlays"] else None, save()))
                     lvr = par.get("live") or {}
