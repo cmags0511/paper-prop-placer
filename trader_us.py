@@ -119,23 +119,36 @@ def find_player(box, team, name):
             next((o for t, o in arr if t and toks and t[-1] == toks[-1] and t[0][0] == toks[0][0]), None))
 
 
+def leg_game(p, l):
+    return "|".join(sorted([l["team"], l["opp"]])) if l.get("opp") else "|".join(sorted(p["teams"]))
+
+
 def settle(L, now):
-    open_ = [p for p in L["parlays"] if p["status"] == "open" and now > T.iso(p["game_t"]) + dt.timedelta(hours=2)]
+    def last_t(p):
+        return max(T.iso(l.get("t") or p["game_t"]) for l in p["legs"])
+    open_ = [p for p in L["parlays"] if p["status"] == "open" and now > last_t(p) + dt.timedelta(hours=2)]
     if not open_:
         return 0
-    games = espn_games(sorted({T.iso(p["game_t"]).astimezone(ET).strftime("%Y%m%d") for p in open_}))
+    dates = {T.iso(l.get("t") or p["game_t"]).astimezone(ET).strftime("%Y%m%d") for p in open_ for l in p["legs"]}
+    games = espn_games(sorted(dates))
     boxes, n = {}, 0
     for p in open_:
-        g = games.get("|".join(sorted(p["teams"])))
-        if not g or g["state"] != "post":
+        gs = {leg_game(p, l) for l in p["legs"]}
+        if any(games.get(k, {}).get("state") != "post" for k in gs):
             continue
-        if g["id"] not in boxes:
-            try:
-                boxes[g["id"]] = espn_box(g["id"])
-            except Exception:
-                continue
-        box, lost, voids = boxes[g["id"]], False, 1.0
+        ok = True
+        for k in gs:
+            gid = games[k]["id"]
+            if gid not in boxes:
+                try:
+                    boxes[gid] = espn_box(gid)
+                except Exception:
+                    ok = False
+        if not ok:
+            continue
+        lost, voids = False, 1.0
         for l in p["legs"]:
+            box = boxes[games[leg_game(p, l)]["id"]]
             o = find_player(box, l["team"], l["name"])
             if o is None:
                 l["result"] = "void"
@@ -190,9 +203,10 @@ class US:
 
 
 def live_spent(L, now, today_only):
+    """today_only: cost bought today (ET). Otherwise: cost of live parlays still open (the exposure cap)."""
     d = now.astimezone(ET).date()
     return sum(p["live"].get("max_cost", 0) for p in L["parlays"] if p.get("live", {}).get("ordered")
-               and (not today_only or T.iso(p["placed"]).astimezone(ET).date() == d))
+               and ((T.iso(p["placed"]).astimezone(ET).date() == d) if today_only else p["status"] == "open"))
 
 
 def fnum(x):
@@ -259,7 +273,7 @@ def rfq_buy(us, par, L, cfg, now, save):
     st, d = us.req("POST", "/v1/combos", {"legs": legs})
     combo = (d or {}).get("combo") or {}
     if st != 200 or not combo.get("id"):
-        rec["error"] = f"combo create failed ({st})"
+        rec["error"] = f"combo create failed ({st}) {json.dumps(d)[:160]}"
         return rec
     pmax = min(0.99, par["p"] / (1 + lv["min_ev"]))
     rec.update(combo=combo["id"], max_price=round(pmax, 4))
@@ -389,6 +403,89 @@ def account_snapshot(us):
     return acc
 
 
+def cross_pass(L, legs, cfg, now, us, live, run, rows_ok=True):
+    """2-leg parlays across DIFFERENT games. Legs are independent, so chance = product of the two leg chances."""
+    cx = cfg["cross"]
+    cand = [c for c in legs if (T.iso(c["t"]) - now).total_seconds() / 60 > cx["min_mins_to_tip"]]
+    cand = sorted(cand, key=lambda c: c["ask"] - c["p"])[:cx["pool"]]
+    pairs = []
+    for a, b in itertools.combinations(cand, 2):
+        if {a["team"], a["opp"]} == {b["team"], b["opp"]}:
+            continue                                   # same game: handled by the 3-leg logic
+        p = a["p"] * b["p"]
+        dec_p = a["dec"] * b["dec"]
+        ev = p * dec_p * (1 - cfg.get("fee_friction", 0)) - 1
+        if ev >= cfg["min_ev"] and p >= cx["min_joint_p"]:
+            pairs.append((ev, p, dec_p, a, b))
+    pairs.sort(key=lambda x: -x[0])
+    used, top = set(), []
+    for ev, p, dec_p, a, b in pairs:
+        if a["key"] in used or b["key"] in used:
+            continue
+        used |= {a["key"], b["key"]}
+        top.append((ev, p, dec_p, a, b))
+        if len(top) >= cx["max_listed"]:
+            break
+    have = {q["id"]: q for q in L["parlays"] if q.get("cross")}
+    held = {l["key"] for q in have.values() if q["status"] == "open" for l in q["legs"]}
+    ids_now = set()
+    orders = 0
+    today = now.astimezone(ET).date()
+    for ev, p, dec_p, a, b in top:
+        combo = [a, b]
+        pid_ = T.pid(["x"], combo)
+        ids_now.add(pid_)
+        if pid_ in have or a["key"] in held or b["key"] in held:
+            continue
+        spent_today = sum(q["stake"] for q in L["parlays"] if T.iso(q["placed"]).astimezone(ET).date() == today)
+        open_risk = sum(q["stake"] for q in L["parlays"] if q["status"] == "open")
+        if cfg["unit"] > L["cash"] or spent_today + cfg["unit"] > cfg["daily_risk_cap"] or \
+                open_risk + cfg["unit"] > cfg["max_open_risk_pct"] * cfg["start_bankroll"]:
+            run["notes"].append("2-leg: risk cap hit")
+            break
+        if orders >= cx["max_per_run"]:
+            break
+        first = min(combo, key=lambda c: c["t"])
+        label = f"{a['name']} + {b['name']}"
+        par = {"id": pid_, "venue": cfg["venue"], "game": "x|" + pid_, "game_t": first["t"], "cross": True,
+               "teams": ["2-LEG", "+".join(c["team"] for c in combo)], "placed": now.isoformat(timespec="minutes"),
+               "mins_to_tip": round((T.iso(first["t"]) - now).total_seconds() / 60), "stake": cfg["unit"],
+               "p_indep": round(p, 3), "corr_factor": 1.0, "p": round(p, 3), "dec_product": round(dec_p, 3),
+               "dec": round(dec_p * (1 - cfg.get("fee_friction", 0)), 3), "ev": round(ev, 3), "pairs": [], "status": "open",
+               "payout": None, "pnl": None, "listed": True, "listed_at_tip": None,
+               "legs": [{"key": c["key"], "name": c["name"], "team": c["team"], "opp": c["opp"], "t": c["t"], "market": c["market"],
+                         "label": c["label"], "side": c["side"], "line": c["line"], "N": c["N"], "slug": c["slug"], "p": round(c["p"], 3),
+                         "ask": c["ask"], "bid": c["bid"], "market_id": c["market_id"], "idx": 0 if c["side"] == "over" else 1,
+                         "q": c["pm_q"]} for c in combo]}
+        orders += 1
+        if us and live:
+            par["live"] = rfq_buy(us, par, L, cfg, now, lambda: (L["parlays"].append(par) if par not in L["parlays"] else None, None))
+            lv = par["live"]
+            if not lv.get("filled"):
+                if par in L["parlays"]:
+                    L["parlays"].remove(par)
+                run["notes"].append(f"2-leg {label}: NOT bet ({lv.get('error') or 'no fill'}; my max {lv.get('max_price')}, model p {par['p']})")
+                continue
+            par["stake"], par["dec"], par["qty"] = lv["cost"], round(lv["qty_filled"] / lv["cost"], 3), lv["qty_filled"]
+        elif not (us and live):
+            run["notes"].append("2-leg: not live, skipped")
+            continue
+        if par not in L["parlays"]:
+            L["parlays"].append(par)
+        L["cash"] = round(L["cash"] - par["stake"], 2)
+        run["placed"] += 1
+        run["notes"].append(f"2-leg {label}: bet, p={par['p']}, pays x{par['dec']}, ev={par['ev']}")
+    for q in have.values():
+        if q["status"] == "open" and T.iso(q["game_t"]) > now:
+            q["listed"] = q["id"] in ids_now
+            if not q["listed"] and not q.get("dropped_at"):
+                q["dropped_at"] = now.isoformat(timespec="minutes")
+            if q["listed"]:
+                q.pop("dropped_at", None)
+            if (T.iso(q["game_t"]) - now).total_seconds() / 60 <= cfg["tipoff_window_min"]:
+                q["listed_at_tip"] = q["listed"]
+
+
 # ------------------------------------------------------------------ main
 def new_ledger(cfg):
     return {"venue": cfg["venue"], "start_bankroll": cfg["start_bankroll"], "unit": cfg["unit"], "cash": cfg["start_bankroll"],
@@ -513,6 +610,9 @@ def main():
                     p["listed_at_tip"] = p["listed"]
                     if all(l["key"] in live_px for l in p["legs"]):
                         p["close_dec_product"] = round(math.prod(live_px[l["key"]]["dec"] for l in p["legs"]), 3)
+
+        if cfg.get("cross", {}).get("enabled"):
+            cross_pass(L, legs, cfg, now, us, live, run)
 
     open_cost = sum(p["stake"] for p in L["parlays"] if p["status"] == "open")
     L["equity"].append({"t": run["t"], "equity": round(L["cash"] + open_cost, 2)})

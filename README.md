@@ -41,3 +41,9 @@ Old global-price paper results are archived in `ledger_global_paper.json`.
 - **live**: only when repo variable `LIVE_TRADING` = `1`. IOC limit buys at a max price that keeps `live.min_ev`,
   capped by `live.daily_cap` / `live.total_cap` in config.json. Set `"paused": true` to stop everything.
 Real ordering is untested until the first shadow previews are checked.
+
+## 2-leg cross-game parlays
+Besides the 3-leg same-game parlays, each run also lists up to 3 two-leg parlays whose legs are in DIFFERENT games
+(`cross` in config.json). Legs are treated as independent (chance = product of the two). They are bought the same way
+(RFQ, cheapest firm quote under the max price) and settle once both games are final. The Live tab does not track
+cross-game parlays leg by leg yet.
