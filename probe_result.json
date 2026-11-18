@@ -1,0 +1,53 @@
+{
+ "ran_at": "2026-11-18T01:20:35Z",
+ "keys_present": true,
+ "checks": {
+  "public_nba_events": {
+   "status": 200,
+   "events": 50,
+   "market_types": {
+    "basketball_team_full_game_winner": 50
+   },
+   "max_markets_per_event": 1
+  },
+  "public_sports_players": {
+   "status": 200
+  },
+  "public_search_points": {
+   "status": 200,
+   "market_types": {
+    "futures": 50
+   }
+  },
+  "public_search_rebounds": {
+   "status": 200,
+   "market_types": {
+    "futures": 24,
+    "basketball_team_full_game_winner": 9
+   }
+  },
+  "public_search_assists": {
+   "status": 200,
+   "market_types": {
+    "futures": 81,
+    "hockey_team_full_game_winner": 7
+   }
+  },
+  "public_search_player_prop": {
+   "status": 200,
+   "market_types": {
+    "futures": 118
+   }
+  },
+  "auth_portfolio_positions": {
+   "status": 200,
+   "authenticated": true
+  },
+  "auth_markets": {
+   "status": 200,
+   "market_types": {
+    "futures": 200
+   }
+  }
+ }
+}
