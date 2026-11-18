@@ -30,7 +30,8 @@
     "daily_cap": 25.0,
     "total_cap": 100.0,
     "min_ev": 0.08,
-    "max_orders_per_run": 6,
-    "enabled": true
+    "max_orders_per_run": 3,
+    "enabled": true,
+    "mode": "rfq_quote"
   }
 }
