@@ -166,9 +166,15 @@ class US:
         self.pk = ed25519.Ed25519PrivateKey.from_private_bytes(base64.b64decode(secret_b64)[:32])
 
     def req(self, method, path, body=None):
+        st, d = self._req(method, path, body, path.split("?")[0])      # docs: sign the path without the query
+        if st in (401, 403) and "?" in path:
+            st, d = self._req(method, path, body, path)                # fallback: sign with the query
+        return st, d
+
+    def _req(self, method, path, body, signed_path):
         ts = str(int(time.time() * 1000))
         h = {"X-PM-Access-Key": self.kid, "X-PM-Timestamp": ts,
-             "X-PM-Signature": base64.b64encode(self.pk.sign(f"{ts}{method}{path}".encode())).decode(),
+             "X-PM-Signature": base64.b64encode(self.pk.sign(f"{ts}{method}{signed_path}".encode())).decode(),
              "Content-Type": "application/json", **UA}
         r = urllib.request.Request(self.base + path, headers=h, method=method, data=json.dumps(body).encode() if body is not None else None)
         try:
