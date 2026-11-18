@@ -30,3 +30,14 @@ Max 25% of bankroll open, $50 of new risk per ET day, `"paused": true` in `confi
 ## Setup
 Push this folder to a new GitHub repo, enable Pages (main branch, root) if you want the dashboard, and let Actions run.
 Public repo = unlimited Actions minutes; private repo ~2,000 free min/month, which this schedule can use up.
+
+
+## Polymarket US (current)
+`trader_us.py` runs the same strategy against the Polymarket US exchange ("at least N" player markets).
+Old global-price paper results are archived in `ledger_global_paper.json`.
+
+- **paper** (no keys): ledger only.
+- **shadow** (keys set, default): also creates the real combo and previews a real order; no order is placed.
+- **live**: only when repo variable `LIVE_TRADING` = `1`. IOC limit buys at a max price that keeps `live.min_ev`,
+  capped by `live.daily_cap` / `live.total_cap` in config.json. Set `"paused": true` to stop everything.
+Real ordering is untested until the first shadow previews are checked.

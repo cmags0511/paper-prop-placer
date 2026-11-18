@@ -202,6 +202,7 @@ def best_combo(legs, rows, PL, cfg):
         # the best of many noisy correlation estimates is biased high, so only part of the boost is trusted
         pj = p0 * (1 + cfg["factor_trust"] * (factor - 1))
         dec_paper = dec / (1 + cfg["book_gives"] * (factor - 1)) if factor > 1 else dec
+        dec_paper *= 1 - cfg.get("fee_friction", 0)   # assumed fees/slippage until real combo quotes are known
         ev = pj * dec_paper - 1
         if ev < cfg["min_ev"] or pj < cfg["min_joint_p"] or pj > .9:
             continue
