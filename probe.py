@@ -79,6 +79,12 @@ if out["keys_present"]:
         if st in (401, 403):
             st, d = get(API + path + q, h("GET", path + q))  # fall back to signing the query too
         out["checks"]["auth_markets"] = {"status": st, "market_types": types(d) if st == 200 else {}}
+        # RFQ / order lookups (read-only GETs; only status codes and key names are recorded)
+        for name, path in (("rfq_user_id", "/v1/rfqs/user-id"), ("rfqs_open", "/v1/rfqs"), ("rfq_quotes", "/v1/rfqs/quotes"),
+                           ("orders_open", "/v1/orders/open")):
+            st, d = get(API + path, h("GET", path))
+            keys = sorted(d.keys())[:10] if st == 200 and isinstance(d, dict) else []
+            out["checks"]["rfq_" + name] = {"status": st, "keys": keys}
 else:
     out["checks"]["auth"] = "skipped: secrets not available to this run"
 
