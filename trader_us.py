@@ -189,12 +189,21 @@ def live_spent(L, now, today_only):
                and (not today_only or T.iso(p["placed"]).astimezone(ET).date() == d))
 
 
+def fnum(x):
+    if isinstance(x, dict):
+        x = x.get("value")
+    try:
+        return float(x)
+    except Exception:
+        return 0.0
+
+
 def exec_summary(resp):
     o = ((resp or {}).get("order") or {}) if "order" in (resp or {}) else {}
     ex = (resp or {}).get("executions") or []
     last = (ex[-1].get("order") if ex else None) or o
-    keep = ("state", "avgPx", "cumQuantity", "leavesQuantity", "commissionNotionalTotalCollected")
-    s = {k: last.get(k) for k in keep if isinstance(last, dict) and last.get(k) is not None}
+    keep = ("state", "avgPx", "cumQuantity", "commissionNotionalTotalCollected")
+    s = {k: (fnum(last.get(k)) if k != "state" else last.get(k)) for k in keep if isinstance(last, dict) and last.get(k) is not None}
     rej = [x.get("rejectReason") or (x.get("order") or {}).get("rejectReason") for x in ex if isinstance(x, dict)]
     if any(rej):
         s["reject"] = [r for r in rej if r]
@@ -228,7 +237,7 @@ def execute(us, par, L, cfg, now, live, save):
     rec["preview_status"], rec["preview"] = st, exec_summary(d)
     if not live:
         return rec
-    if st != 200 or not rec["preview"].get("avgPx"):
+    if st != 200 or not rec["preview"].get("avgPx") or not rec["preview"].get("cumQuantity"):
         rec["error"] = "preview showed no fill at an acceptable price"
         return rec
     if live_spent(L, now, True) + rec["max_cost"] > lv["daily_cap"] or live_spent(L, now, False) + rec["max_cost"] > lv["total_cap"]:
@@ -243,11 +252,11 @@ def execute(us, par, L, cfg, now, live, save):
         rec["error"] = f"order failed ({st})"
     r = rec["result"]
     try:
-        q, px = float(r.get("cumQuantity") or 0), float(r.get("avgPx") or 0)
+        q, px = fnum(r.get("cumQuantity")), fnum(r.get("avgPx"))
     except Exception:
         q = px = 0
     if q > 0 and px > 0:
-        fee = float(r.get("commissionNotionalTotalCollected") or 0)
+        fee = fnum(r.get("commissionNotionalTotalCollected"))
         rec.update(filled=True, qty_filled=q, avg_px=px, cost=round(q * px + fee, 4))
     return rec
 
@@ -339,7 +348,7 @@ def main():
                     if live and not lvr.get("filled"):
                         if par in L["parlays"]:
                             L["parlays"].remove(par)
-                        run["notes"].append(f"{label}: NOT bet ({lvr.get('error') or lvr.get('result') or 'no fill'})")
+                        run["notes"].append(f"{label}: NOT bet ({lvr.get('error') or 'no fill'}; my max price {lvr.get('max_price')}, model p {par['p']}, preview {lvr.get('preview')}, legs asks product {par['dec_product']})")
                         continue
                     if live:
                         par["stake"], par["dec"], par["qty"] = lvr["cost"], round(lvr["qty_filled"] / lvr["cost"], 3), lvr["qty_filled"]
