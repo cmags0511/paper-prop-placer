@@ -535,7 +535,8 @@ def main():
             games.setdefault((c["t"], *sorted((c["team"], c["opp"]))), []).append(c)
         by_game = {}
         for p in L["parlays"]:
-            by_game.setdefault(p["game"], []).append(p)
+            if not p.get("cross"):                      # 2-leg cross-game parlays are handled by cross_pass
+                by_game.setdefault(p["game"], []).append(p)
         today = now.astimezone(ET).date()
         spent_today = sum(p["stake"] for p in L["parlays"] if T.iso(p["placed"]).astimezone(ET).date() == today)
         orders = 0
