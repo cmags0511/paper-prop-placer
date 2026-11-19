@@ -185,18 +185,18 @@ async function livePoll(){
   if(LV.busy||!L)return;LV.busy=true;
   try{
     const O=L.parlays.filter(p=>p.status==="open");
-    const dates=[...new Set(O.map(p=>etDate(p.game_t)))];
+    const dates=[...new Set(O.flatMap(p=>p.legs.map(l=>etDate(lgt(p,l)))))];
     const sbs=await Promise.all(dates.map(d=>jget(ESPN+"scoreboard?dates="+d).catch(()=>null)));
     const g={};
     sbs.filter(Boolean).forEach(sb=>sb.events.forEach(e=>{const t=e.competitions[0].competitors;
       g[gkey(t[0].team.abbreviation,t[1].team.abbreviation)]={id:e.id,state:e.status.type.state,detail:e.status.type.shortDetail,period:e.status.period,clock:e.status.displayClock,
         score:Object.fromEntries(t.map(x=>[x.team.abbreviation,x.score]))}}));
     LV.g=g;
-    const gm=p=>g[gkey(p.teams[0],p.teams[1])];
-    const need=[...new Set(O.map(gm).filter(x=>x&&x.state!=="pre").map(x=>x.id))];
+    const gml=(p,l)=>g[lgk(p,l)];
+    const need=[...new Set(O.flatMap(p=>p.legs.map(l=>gml(p,l))).filter(x=>x&&x.state!=="pre").map(x=>x.id))];
     await Promise.all(need.map(id=>jget(ESPN+"summary?event="+id).then(d=>{LV.box[id]=parseBox(d)}).catch(()=>{})));
-    const mids=[...new Set(O.filter(p=>{const x=gm(p);return !x||x.state!=="post"}).flatMap(p=>p.legs.map(l=>l.market_id)))];
-    await Promise.all(mids.map(id=>jget("https://gamma-api.polymarket.com/markets/"+id).then(m=>{LV.px[id]={bid:m.bestBid==null?null:+m.bestBid,ask:m.bestAsk==null?null:+m.bestAsk}}).catch(()=>{})));
+    const slugs=[...new Set(O.flatMap(p=>p.legs.filter(l=>{const x=gml(p,l);return !x||x.state!=="post"}).map(l=>l.slug)).filter(Boolean))];
+    await Promise.all(slugs.map(sl=>jget("https://gateway.polymarket.us/v1/market/slug/"+sl).then(d=>{const m=d.market||{},q=v=>v&&v.value!=null?+v.value:null;LV.px[sl]={bid:q(m.bestBidQuote),ask:q(m.bestAskQuote)}}).catch(()=>{})));
     LV.at=Date.now();LV.err="";LV.ms=Object.values(g).some(x=>x.state==="in")?20000:90000;
   }catch(e){LV.err=String(e.message||e)}
   LV.busy=false;if(S.tab==="live")live();
@@ -207,6 +207,8 @@ function elapsed(g){ // share of regulation played, null in overtime
   if(!g||g.state==="pre")return 0;if(g.state==="post")return 1;if(g.period>4)return null;
   return Math.max(0,Math.min(1,((g.period-1)*720+720-clk(g.clock))/2880));
 }
+const lgk=(p,l)=>l.opp?gkey(l.team,l.opp):gkey(p.teams[0],p.teams[1]);
+const lgt=(p,l)=>l.t||p.game_t;
 function legLive(l,p,g,box){
   const o=findP(box,l.team,l.name),fin=g&&g.state==="post";
   if(!g||g.state==="pre")return {st:"pre"};
@@ -215,13 +217,14 @@ function legLive(l,p,g,box){
   if(l.side==="over"){if(v>l.line)return {st:"hit",v};if(fin)return {st:v===l.line?"push":"miss",v};return {st:"alive",v,left:l.line-v,pace}}
   if(v>l.line)return {st:"bust",v};if(fin)return {st:v===l.line?"push":"hit",v};return {st:"alive",v,left:l.line-v,pace};
 }
-function px(l){const q=LV.px[l.market_id];if(!q||q.bid==null||q.ask==null)return null;const m=(q.bid+q.ask)/2;return l.idx===0?m:1-m}
-function liveCard(p,g,box){
-  const ls=p.legs.map(l=>({l,r:legLive(l,p,g,box)}));
+function px(l){const q=LV.px[l.slug];if(!q||q.bid==null||q.ask==null)return null;const m=(q.bid+q.ask)/2;return l.idx===0?m:1-m}
+function liveCard(p,g0,box0){
+  const gb=l=>{if(!p.cross)return {g:g0,box:box0};const g=LV.g[lgk(p,l)];return {g,box:g&&LV.box[g.id]}};
+  const ls=p.legs.map(l=>{const x=gb(l);return {l,r:legLive(l,p,x.g,x.box),g:x.g}});
   const sts=ls.map(x=>x.r.st),dead=sts.some(s=>s==="bust"||s==="miss"),all=sts.every(s=>s==="hit"),odd=sts.some(s=>s==="push"||s==="dnp");
   let chance=1,ok=true;ls.forEach(({l,r})=>{if(r.st==="hit")return;if(r.st==="bust"||r.st==="miss"){chance=0;return}const q=px(l);if(q==null)ok=false;else chance*=q});
   const worth=p.stake*p.dec*chance,pay=p.stake*p.dec;
-  const rows=ls.map(({l,r})=>{
+  const rows=ls.map(({l,r,g})=>{
     const lab=`${l.side==="under"?"Under":"Over"} ${l.line} ${esc(l.label.replace("Points","pts").replace("Rebounds","reb").replace("Assists","ast").replace("3-Pointers","3s"))}`;
     let txt="",c="m",w=0,col="#3a4252";
     if(r.st==="pre"||r.st==="wait"){txt=r.st==="pre"?"not started":"no stats yet"}
@@ -232,7 +235,7 @@ function liveCard(p,g,box){
       else if(r.st==="push"){txt=`push ${r.v}`;col="#f5c451"}
       else{txt=`${r.v} now`+(l.side==="over"?` · needs ${r.left>0?Math.ceil(r.left):0}`:` · room for ${Math.floor(r.left)}`)+(r.pace!=null?` · pace ${r.pace.toFixed(1)}`:"");
         col=l.side==="over"?"#6ea8fe":(w>=80?"#f5c451":"#3ecf8e")}}
-    return `<div class="lg"><div class="lt"><span><b>${esc(l.name)}</b> <span class="m">${lab}</span></span><span class="${c}">${txt}</span></div><div class="bar"><i style="width:${w}%;background:${col}"></i></div></div>`}).join("");
+    return `<div class="lg"><div class="lt"><span><b>${esc(l.name)}</b> <span class="m">${lab}</span></span><span class="${c}">${txt}</span></div>${p.cross?`<div class="s">${esc(l.team)} @ ${esc(l.opp||"")} · ${!g?when(lgt(p,l)):g.state==="in"?"live "+esc(g.detail)+" · "+esc(l.team)+" "+g.score[l.team]+" – "+g.score[l.opp]:g.state==="post"?"final":when(lgt(p,l))}</div>`:""}<div class="bar"><i style="width:${w}%;background:${col}"></i></div></div>`}).join("");
   let foot;
   if(dead)foot=`<span class="r"><b>Lost</b> ${money(-p.stake)} (a leg is dead)</span>`;
   else if(all)foot=`<span class="g"><b>All legs hit</b> · pays ${cash(pay)} once it settles</span>`;
@@ -244,16 +247,16 @@ function liveCard(p,g,box){
 function live(){
   const O=L.parlays.filter(p=>p.status==="open");
   if(!O.length){$("#view").innerHTML=`<div class="empty">No open bets right now</div>`;return}
-  const m=new Map();O.forEach(p=>{(m.get(p.game)||m.set(p.game,[]).get(p.game)).push(p)});
+  const OX=O.filter(p=>p.cross),m=new Map();O.filter(p=>!p.cross).forEach(p=>{(m.get(p.game)||m.set(p.game,[]).get(p.game)).push(p)});
   const rank=x=>!x?1:x.state==="in"?0:x.state==="pre"?1:2;
   const gs=[...m].map(([k,ps])=>({k,ps,g:LV.g[gkey(ps[0].teams[0],ps[0].teams[1])]})).sort((a,b)=>rank(a.g)-rank(b.g)||a.k.localeCompare(b.k));
   let tot=0,stk=0,okAll=true;
   const body=gs.map(({ps,g})=>{
     const box=g&&LV.box[g.id],t=ps[0].teams,sc=g&&g.state!=="pre"?`${t[0]} ${g.score[t[0]]} – ${g.score[t[1]]} ${t[1]}`:`${t[0]} @ ${t[1]}`;
     const stat=!g?`<span class="m">${when(ps[0].game_t)}</span>`:g.state==="in"?`<span class="r"><i class="dot"></i>${esc(g.detail)}</span>`:g.state==="post"?`<span class="m">Final</span>`:`<span class="m">${when(ps[0].game_t)}</span>`;
-    return `<div class="gh"><b>${esc(sc)}</b>${stat}</div>`+ps.map(p=>liveCard(p,g,box)).join("")}).join("");
-  O.forEach(p=>{stk+=p.stake;const g=LV.g[gkey(p.teams[0],p.teams[1])],box=g&&LV.box[g.id];let c=1;
-    p.legs.forEach(l=>{const r=legLive(l,p,g,box);if(r.st==="hit")return;if(r.st==="bust"||r.st==="miss"){c=0;return}const q=px(l);if(q==null)okAll=false;else c*=q});tot+=p.stake*p.dec*c});
+    return `<div class="gh"><b>${esc(sc)}</b>${stat}</div>`+ps.map(p=>liveCard(p,g,box)).join("")}).join("")+(OX.length?`<div class="gh"><b>2-leg parlays · different games</b><span class="m">${OX.length}</span></div>`+OX.map(p=>liveCard(p)).join(""):"");
+  O.forEach(p=>{stk+=p.stake;let c=1;
+    p.legs.forEach(l=>{const g=LV.g[lgk(p,l)],box=g&&LV.box[g.id],r=legLive(l,p,g,box);if(r.st==="hit")return;if(r.st==="bust"||r.st==="miss"){c=0;return}const q=px(l);if(q==null)okAll=false;else c*=q});tot+=p.stake*p.dec*c});
   const age=LV.at?Math.round((Date.now()-LV.at)/1000):null;
   $("#view").innerHTML=`<div class="c" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><div class="k">Open bets worth now</div><div class="v ${tot>=stk?"g":"r"}">${LV.at?cash(tot):"…"}</div><div class="s">${O.length} bets · ${cash(stk)} staked${okAll?"":" · some prices missing"}</div></div>
    <div style="text-align:right"><button class="chip" data-refresh="1">${LV.busy?"Updating…":"Refresh"}</button><div class="s" style="margin-top:4px">${LV.err?`<span class="r">${esc(LV.err)}</span>`:age==null?"loading":`updated ${age}s ago`}</div></div></div>`+body+
