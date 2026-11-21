@@ -70,10 +70,14 @@ def price_legs(pool, idx, cfg):
         if yb is None or ya is None or ya - yb > cfg["max_spread"]:
             continue
         ask, bid = (ya, yb) if c["side"] == "over" else (1 - yb, 1 - ya)
-        if not cfg["leg_min_edge"] <= c["p"] - ask <= cfg["leg_max_edge"]:
-            continue
+        if f'{c["market"]}:{c["side"]}' in cfg.get("block_legs", []):
+            continue                                   # e.g. assist unders: the model was far too confident on these
+        mid = (ask + bid) / 2
+        pb = cfg.get("market_blend", 0) * mid + (1 - cfg.get("market_blend", 0)) * c["p"]   # shrink model toward the market
+        if c["p"] <= ask or not cfg["leg_min_edge"] <= pb - ask <= cfg["leg_max_edge"]:
+            continue                                   # need an edge on BOTH the model and the blend
         st["priced"] += 1
-        legs.append(dict(c, market_id=m["id"], slug=m["slug"], N=int(c["line"]) + 1, ask=round(ask, 4), bid=round(bid, 4),
+        legs.append(dict(c, p_model=c["p"], p=round(pb, 4), market_id=m["id"], slug=m["slug"], N=int(c["line"]) + 1, ask=round(ask, 4), bid=round(bid, 4),
                          dec=1 / ask, pm_q=m["q"]))
     return legs, st
 
