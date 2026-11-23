@@ -1,0 +1,31 @@
+name: Game day
+on:
+  schedule:
+    - cron: "23 13 * * *"          # daily start; the job then follows the tip-off times itself
+  workflow_dispatch:
+concurrency:
+  group: paper-trade
+  cancel-in-progress: false
+permissions:
+  contents: write
+  actions: write
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: cmags0511/prop-tracker
+          path: prop-tracker
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install cryptography
+      - name: Follow tip-off times
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLYMARKET_API_KEY_ID: ${{ secrets.POLYMARKET_API_KEY_ID }}
+          POLYMARKET_API_KEY_SECRET: ${{ secrets.POLYMARKET_API_KEY_SECRET }}
+        run: python gameday.py

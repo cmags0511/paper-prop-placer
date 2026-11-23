@@ -1,7 +1,6 @@
 name: Paper trade
 on:
   schedule:
-    - cron: "7,37 15-23,0-4 * * *"   # NBA tip-off hours (UTC): early entries, tip-off entries
     - cron: "11 12 * * *"             # morning settle of last night's games
     - cron: "17 5-11 * * *"          # hourly overnight so finished games settle soon after the final buzzer
   workflow_dispatch:
